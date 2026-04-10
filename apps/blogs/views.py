@@ -4,32 +4,34 @@ import logging
 import redis
 import httpx
 import asyncio
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 # Django modules
 from django.core.cache import cache
 from django.contrib.auth import get_user_model
 # DRF modules
 from drf_spectacular.utils import (
-    extend_schema, 
-    OpenApiExample, 
-    extend_schema_view, 
+    extend_schema,
+    OpenApiExample,
+    extend_schema_view,
     OpenApiParameter,
     inline_serializer,
-    
+
 )
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticatedOrReadOnly
 from rest_framework.serializers import (
-    IntegerField, 
-    CharField, 
-    ListField, 
+    IntegerField,
+    CharField,
+    ListField,
     DictField,
 )
 from rest_framework.viewsets import ModelViewSet, ViewSet
 from rest_framework.status import (
-    HTTP_201_CREATED, 
+    HTTP_201_CREATED,
     HTTP_400_BAD_REQUEST,
     HTTP_429_TOO_MANY_REQUESTS,
     HTTP_200_OK,
@@ -37,20 +39,22 @@ from rest_framework.status import (
     HTTP_404_NOT_FOUND,
     HTTP_403_FORBIDDEN,
     HTTP_204_NO_CONTENT,
-    )
+)
 
 # Project modules
-from .models import Comment, Post
+from .models import Comment, Post, Category, Tag
 from .permissions import IsOwnerOrReadOnly
-from .serializers import CommentSerializer, PostDetailSerializer, PostListSerializer
+from .serializers import CommentSerializer, PostDetailSerializer, PostListSerializer, CategorySerializer, TagSerializer
 from .throttles import PostCreateThrottle
 
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
+
 def get_posts_cache_key(lang: str) -> str:
     return f"posts_list_{lang}"
+
 
 POSTS_CACHE_TTL = 60
 
@@ -188,7 +192,8 @@ def _get_redis():
     ),
 )
 class PostViewSet(ModelViewSet):
-    queryset = Post.objects.select_related("author").prefetch_related("category", "tags")
+    queryset = Post.objects.select_related(
+        "author").prefetch_related("category", "tags")
     lookup_field = "slug"
     permission_classes = [IsOwnerOrReadOnly]
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
@@ -226,25 +231,29 @@ class PostViewSet(ModelViewSet):
             serializer = self.get_serializer(page, many=True)
             data = serializer.data
             cache.set(cache_key, data, POSTS_CACHE_TTL)
-            logger.debug("Posts list cached (lang=%s, ttl=%ss)", lang, POSTS_CACHE_TTL)
+            logger.debug("Posts list cached (lang=%s, ttl=%ss)",
+                         lang, POSTS_CACHE_TTL)
             return self.get_paginated_response(data)
 
         serializer = self.get_serializer(queryset, many=True)
         data = serializer.data
         cache.set(cache_key, data, POSTS_CACHE_TTL)
-        logger.debug("Posts list cached (lang=%s, ttl=%ss)", lang, POSTS_CACHE_TTL)
+        logger.debug("Posts list cached (lang=%s, ttl=%ss)",
+                     lang, POSTS_CACHE_TTL)
         return Response(data)
 
     def perform_create(self, serializer):
         user = self.request.user
-        logger.info("Post creation attempt by: %s", user.email) # type: ignore
+        logger.info("Post creation attempt by: %s", user.email)  # type: ignore
         try:
             post = serializer.save(author=user)
             for lang_code, _ in [("en", ""), ("ru", ""), ("kk", "")]:
                 cache.delete(get_posts_cache_key(lang_code))
-            logger.info("Post created: '%s' (id=%s) by %s", post.title, post.pk, user.email) # type:ignore
+            logger.info("Post created: '%s' (id=%s) by %s",
+                        post.title, post.pk, user.email)  # type:ignore
         except Exception:
-            logger.exception("Failed to create post for user: %s", user.email) # type: ignore
+            logger.exception("Failed to create post for user: %s",
+                             user.email)  # type: ignore
             raise
 
     def perform_update(self, serializer):
@@ -253,14 +262,16 @@ class PostViewSet(ModelViewSet):
             post = serializer.save()
             for lang_code, _ in [("en", ""), ("ru", ""), ("kk", "")]:
                 cache.delete(get_posts_cache_key(lang_code))
-            logger.info("Post updated: '%s' (id=%s) by %s", post.title, post.pk, user.email) # type: ignore
+            logger.info("Post updated: '%s' (id=%s) by %s",
+                        post.title, post.pk, user.email)  # type: ignore
         except Exception:
             logger.exception("Failed to update post")
             raise
 
     def perform_destroy(self, instance):
         user = self.request.user
-        logger.info("Post deleted: '%s' (id=%s) by %s", instance.title, instance.pk, user.email) # type: ignore
+        logger.info("Post deleted: '%s' (id=%s) by %s",
+                    instance.title, instance.pk, user.email)  # type: ignore
         for lang_code, _ in [("en", ""), ("ru", ""), ("kk", "")]:
             cache.delete(get_posts_cache_key(lang_code))
         instance.delete()
@@ -289,24 +300,31 @@ class PostViewSet(ModelViewSet):
         serializer.is_valid(raise_exception=True)
         comment = serializer.save(post=post, author=request.user)
 
-        logger.info("Comment created (id=%s) on post '%s' by %s", comment.pk, post.slug, request.user.email)
+        logger.info("Comment created (id=%s) on post '%s' by %s",
+                    comment.pk, post.slug, request.user.email)
 
         try:
-            r = _get_redis()
-            payload = json.dumps({
-                "event":      "new_comment",
-                "comment_id": comment.pk,
-                "post_slug":  post.slug,
-                "author":     request.user.email,
-                "body":       comment.body,
-            })
-            r.publish("comments", payload)
-            logger.debug("Published new_comment event to Redis channel 'comments'")
+            channel_layer = get_channel_layer()
+
+            async_to_sync(channel_layer.group_send)(
+                f"comments_{post.slug}",
+                {
+                    "type": "send_comment",
+                    "data": {
+                        "comment_id": comment.pk,
+                        "author": request.user.email,
+                        "body": comment.body,
+                        "created_at": str(comment.created_at),
+                    }
+                }
+            )
+            logger.debug(
+                "Published new_comment event to Redis channel 'comments'")
         except Exception:
             logger.exception("Failed to publish comment event")
 
         return Response(serializer.data, status=status.HTTP_201_CREATED)
-    
+
 
 @extend_schema(tags=["Stats"])
 class StatsViewSet(ViewSet):
@@ -314,7 +332,7 @@ class StatsViewSet(ViewSet):
     ViewSet for Stats 
     """
     permission_classes = [AllowAny]
-    
+
     @extend_schema(
         summary="Get blog statistics with external data",
         description=(
@@ -349,30 +367,33 @@ class StatsViewSet(ViewSet):
             "total_comments": Comment.objects.count(),
             "total_users": User.objects.count(),
         }
-        
+
         exchange_rates, current_time = asyncio.run(self._fetch_external_data())
 
         return Response(
             {
-            "blog": blog_stats,
-            "exchange_rates": exchange_rates,
-            "current_time": current_time,
+                "blog": blog_stats,
+                "exchange_rates": exchange_rates,
+                "current_time": current_time,
             }
         )
+
     async def _fetch_external_data(self):
         """
         Fetch the data from two external APIs
         """
         async with httpx.AsyncClient(timeout=10.0) as client:
             results = await asyncio.gather(
-                self._fetch_exchange_rates(client), # type: ignore
-                self._fetch_current_time(client), # type: ignore
+                self._fetch_exchange_rates(client),  # type: ignore
+                self._fetch_current_time(client),  # type: ignore
                 return_exceptions=True,
             )
-            exchange_rates = results[0] if not isinstance(results[0], Exception) else {}
-            current_time = results[1] if not isinstance(results[1], Exception) else "N/A"
+            exchange_rates = results[0] if not isinstance(
+                results[0], Exception) else {}
+            current_time = results[1] if not isinstance(
+                results[1], Exception) else "N/A"
             return exchange_rates, current_time
-        
+
         async def _fetch_exchange_rates(self, client: httpx.AsyncClient):
             try:
                 response = await client.get("https://open.er-api.com/v6/latest/USD")
@@ -388,7 +409,7 @@ class StatsViewSet(ViewSet):
             except Exception as e:
                 logger.error(f"Failed to fetch exchange rates: {e}")
                 return {}
-            
+
         async def _fetch_current_time(self, client: httpx.AsyncClient):
             try:
                 response = await client.get("https://timeapi.io/api/time/current/zone?timeZone=Asia/Almaty")
@@ -396,7 +417,18 @@ class StatsViewSet(ViewSet):
                 data = response.json()
                 return data.get("dateTime", "N/A")
 
-
             except Exception as e:
                 logger.error(f"Failed to fetch current time: {e}")
                 return "N/A"
+
+
+class CategoryViewSet(ModelViewSet):
+    queryset = Category.objects.all()
+    serializer_class = CategorySerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+
+
+class TagViewSet(ModelViewSet):
+    queryset = Tag.objects.all()
+    serializer_class = TagSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]

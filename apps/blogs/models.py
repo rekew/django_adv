@@ -1,3 +1,6 @@
+# Python modules
+import uuid
+
 # Django modules
 from django.db.models import (
     CharField,
@@ -11,6 +14,7 @@ from django.db.models import (
     Model,
 )
 from django.utils.translation import get_language, gettext_lazy as _
+from django.utils.text import slugify
 # Project modules
 from apps.users.models import User
 
@@ -33,18 +37,20 @@ class Category(Model):
 
     def __str__(self):
         return self.get_name()
-    
+
     def get_name(self, lang=None):
         if lang is None:
             lang = get_language()
-    
-        translation = self.translations.filter(language=lang).first()  # type: ignore
+
+        translation = self.translations.filter(
+            language=lang).first()  # type: ignore
         if translation:
             return translation.name
-        
-        fallback = self.translations.filter(language="en").first()  # type: ignore
+
+        fallback = self.translations.filter(
+            language="en").first()  # type: ignore
         return fallback.name if fallback else f"Category {self.id}"
-    
+
 
 class CategoryTranslation(Model):
     """
@@ -63,12 +69,12 @@ class CategoryTranslation(Model):
         choices=[("en", "English"), ("ru", "Russian"), ("kk", "Kazakh")],
     )
     name = CharField(max_length=NAME_MAX_LENGTH, verbose_name=_("Title"))
- 
+
     class Meta:
         unique_together = [("category", "language")]
         verbose_name = _("Category Translation")
         verbose_name_plural = _("Category Translations")
- 
+
     def __str__(self) -> str:
         return f"{self.category.slug} [{self.language}]: {self.name}"
 
@@ -77,7 +83,7 @@ class Tag(Model):
     """
     Model for Tag in db
     """
-    
+
     name = CharField(max_length=NAME_MAX_LENGTH, unique=True)
     slug = SlugField(unique=True)
 
@@ -99,11 +105,18 @@ class Post(Model):
     title = CharField(max_length=TITLE_MAX_LENGTH)
     slug = SlugField(unique=True)
     body = TextField()
-    category_id = ForeignKey(Category, on_delete=SET_NULL, null=True)
+    category = ForeignKey(Category, on_delete=SET_NULL, null=True)
     tags = ManyToManyField(Tag, blank=True)
-    status = CharField(max_length=STATUS_MAX_LENGTH,choices=STATUS_CHOICE)
+    status = CharField(max_length=STATUS_MAX_LENGTH, choices=STATUS_CHOICE)
     created_at = DateTimeField(auto_now_add=True)
     updated_at = DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.title)
+            self.slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
+
+        super().save(*args, **kwargs)
 
     class Meta:
         verbose_name = _("Post")
@@ -112,7 +125,7 @@ class Post(Model):
 class Comment(Model):
     """
     Model for comment in db
-    """    
+    """
 
     post = ForeignKey(Post, on_delete=CASCADE)
     author = ForeignKey(User, on_delete=CASCADE)
@@ -121,5 +134,3 @@ class Comment(Model):
 
     class Meta:
         verbose_name = _("Comment")
-
-
