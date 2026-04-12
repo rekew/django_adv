@@ -89,6 +89,7 @@ class PostDetailSerializer(ModelSerializer):
         write_only = True,
         required = True,
         allow_null = True,
+        many = True,
     )
 
     class Meta:

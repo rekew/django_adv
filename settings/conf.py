@@ -10,5 +10,5 @@ ENV_POSSIBLE_OPTIONS = (
     'prod',
 )
 
-ENV_ID = config("BLOG_ENV_ID", cast=str)
+ENV_ID = config("BLOG_ENV_ID", cast=str, default="local")
 SECRET_KEY = config("SECRET_KEY")

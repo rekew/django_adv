@@ -30,11 +30,13 @@ DJANGO_AND_THIRD_PARTY_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
     "drf_spectacular",
+    "channels"
 ]
 
 PROJECT_APPS = [
     "apps.users",
     "apps.blogs",
+    "apps.notifications",
 ]
 
 INSTALLED_APPS = DJANGO_AND_THIRD_PARTY_APPS + PROJECT_APPS
@@ -98,6 +100,7 @@ REST_FRAMEWORK = {
         "register": "5/min",
         "token": "10/min",
         "post_create": "20/min",
+        "login": "10/min",
     },
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
@@ -117,10 +120,10 @@ SPECTACULAR_SETTINGS = {
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=5),
+    "ACCESS_TOKEN_LIFETIME": timedelta(days=19),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
     "ROTATE_REFRESH_TOKENS": True,
-    "AUTH_HEADER_TYPES": ("JWT",),
+    "AUTH_HEADER_TYPES": ("Bearer",),
 
     }
 
@@ -131,12 +134,28 @@ SIMPLE_JWT = {
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": "redis://127.0.0.1:6379/1",
+        "LOCATION": "redis://127.0.0.1:6380/1",
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
         }
     }
 }
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": ["redis://127.0.0.1:6380/0"],
+        },
+    },
+}
+
+# ----------------------------------------------
+# Celery
+#
+
+CELERY_BROKER_URL = "redis://127.0.0.1:6380/2"
+CELERY_RESULT_BACKEND = "redis://127.0.0.1:6380/2"
 
 # ----------------------------------------------
 # LOGGING
@@ -234,7 +253,8 @@ DEFAULT_FROM_EMAIL = "noreply@local.blog"
 # ----------------------------------------------
 # Static | Media
 #
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 DEBUG = True
 
