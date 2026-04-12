@@ -10,6 +10,7 @@ from channels.layers import get_channel_layer
 # Django modules
 from django.core.cache import cache
 from django.contrib.auth import get_user_model
+from django.http import StreamingHttpResponse
 # DRF modules
 from drf_spectacular.utils import (
     extend_schema,
@@ -432,3 +433,31 @@ class TagViewSet(ModelViewSet):
     queryset = Tag.objects.all()
     serializer_class = TagSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
+
+
+async def post_stream(request):
+    """
+    SSE endpoint: streams new published posts in real-time.
+    """
+
+    r = redis.Redis(host="localhost", port=6379, db=0)
+    pubsub = r.pubsub()
+    pubsub.subscribe("posts")
+
+    async def event_stream():
+        loop = asyncio.get_event_loop()
+
+        while True:
+            message = await loop.run_in_executor(None, pubsub.get_message)
+
+            if message and message["type"] == "message":
+                data = message["data"].decode()
+
+                yield f"data: {data}\n\n"
+
+            await asyncio.sleep(0.1)
+
+    return StreamingHttpResponse(
+        event_stream(),
+        content_type="text/event-stream"
+    )

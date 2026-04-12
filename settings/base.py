@@ -253,7 +253,8 @@ DEFAULT_FROM_EMAIL = "noreply@local.blog"
 # ----------------------------------------------
 # Static | Media
 #
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 DEBUG = True
 

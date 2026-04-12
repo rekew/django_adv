@@ -9,7 +9,7 @@ urlpatterns = [
     # Project urls
     path('admin/', admin.site.urls),
     path("", include("apps.users.urls")),
-    path("blog/", include("apps.blogs.urls")),
+    path("api/blog/", include("apps.blogs.urls")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
         "api/docs/swagger-ui/",
@@ -21,4 +21,5 @@ urlpatterns = [
         SpectacularRedocView.as_view(url_name="schema"),
         name="redoc",
     ),
+    path("api/notifications/", include("apps.notifications.urls")),
 ]
